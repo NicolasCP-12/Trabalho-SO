@@ -96,6 +96,10 @@ is_prio() {
     esac
 }
 
+
+
+
+
 acquire_lock() {
      while ! mkdir "$LOCKS/main.lock" 2>/dev/null; do
         sleep 1
@@ -107,6 +111,10 @@ release_lock() {
     rmdir "$LOCKS/main.lock" 2>/dev/null
     :
 }
+
+
+
+
 
 cmd_todo_add() {
     [ "${1-}" = "-h" ] && {
@@ -187,19 +195,101 @@ titulo=""
 }
 
 
+
+
 cmd_todo_list() {
     [ "${1-}" = "-h" ] && {
         print_todo_list_help
         return 0
     }
-
-    # TODO:
-    # - suportar -a, -s, -t, -p
-    # - filtrar e ordenar
-    # - imprimir formatado
-
-   
+mostrar_todas=""
+    ordenar=""
+    tag_filtro=""
+    prio_min=0
+    
+    # Processar argumentos
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -a)
+                mostrar_todas="sim"
+                shift
+                ;;
+            -s)
+                ordenar="$2"
+                shift 2
+                ;;
+            -t)
+                tag_filtro="$2"
+                shift 2
+                ;;
+            -p)
+                prio_min="$2"
+                shift 2
+                ;;
+            *)
+                echo "Erro: Opção desconhecida $1" >&2
+                return 1
+                ;;
+        esac
+    done
+    
+    # Verificar se arquivo existe
+    if [ ! -f "$TODOS" ]; then
+        echo "Nenhuma tarefa encontrada"
+        return 0
+    fi
+    
+    # Filtrar por status (OPEN ou todas)
+    if [ -z "$mostrar_todas" ]; then
+        # Mostrar só OPEN
+        grep -v '^[^;]*;DONE;' "$TODOS" > /tmp/tarefas_temp
+    else
+        # Mostrar todas
+        cp "$TODOS" /tmp/tarefas_temp
+    fi
+    
+    # Filtrar por prioridade mínima
+    if [ "$prio_min" -gt 0 ]; then
+        awk -F';' -v p="$prio_min" '$3 >= p' /tmp/tarefas_temp > /tmp/tarefas_temp2
+        mv /tmp/tarefas_temp2 /tmp/tarefas_temp
+    fi
+    
+    # Filtrar por tag
+    if [ -n "$tag_filtro" ]; then
+        grep ";$tag_filtro,\|,$tag_filtro\|;$tag_filtro$" /tmp/tarefas_temp > /tmp/tarefas_temp2
+        mv /tmp/tarefas_temp2 /tmp/tarefas_temp
+    fi
+    
+    # Ordenar
+    case "$ordenar" in
+        due)
+            sort -t';' -k4,4 /tmp/tarefas_temp > /tmp/tarefas_temp2
+            ;;
+        prio)
+            sort -t';' -k3,3 -r /tmp/tarefas_temp > /tmp/tarefas_temp2
+            ;;
+        created)
+            sort -t';' -k6,6 /tmp/tarefas_temp > /tmp/tarefas_temp2
+            ;;
+        *)
+            cat /tmp/tarefas_temp > /tmp/tarefas_temp2
+            ;;
+    esac
+    
+    # Mostrar resultado
+    while IFS=';' read -r id status prio due tags created done title; do
+        echo "[$id] (P$prio) $due $status tags:$tags - $title"
+    done < /tmp/tarefas_temp2
+    
+    # Limpar arquivo temporário
+    rm -f /tmp/tarefas_temp /tmp/tarefas_temp2
 }
+
+
+
+
+
+
 
 cmd_todo_done() {
     [ "${1-}" = "-h" ] && {
@@ -257,6 +347,12 @@ id="$1"
     
 }
 
+
+
+
+
+
+
 cmd_todo_search() {
     [ "${1-}" = "-h" ] && {
         print_todo_search_help
@@ -269,6 +365,11 @@ cmd_todo_search() {
 
     echo "TODO: implementar todo-search"
 }
+
+
+
+
+
 
 cmd_handin_ingest() {
     [ "${1-}" = "-h" ] && {
@@ -287,6 +388,12 @@ cmd_handin_ingest() {
     echo "TODO: implementar handin-ingest"
 }
 
+
+
+
+
+
+
 cmd_handin_check() {
     [ "${1-}" = "-h" ] && {
         print_handin_check_help
@@ -302,6 +409,12 @@ cmd_handin_check() {
     echo "TODO: implementar handin-check"
 }
 
+
+
+
+
+
+
 cmd_handin_summary() {
     [ "${1-}" = "-h" ] && {
         print_handin_summary_help
@@ -315,6 +428,11 @@ cmd_handin_summary() {
 
     echo "TODO: implementar handin-summary"
 }
+
+
+
+
+
 
 dispatch() {
     [ $# -gt 0 ] || {
