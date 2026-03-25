@@ -113,17 +113,79 @@ cmd_todo_add() {
         print_todo_add_help
         return 0
     }
-
-    # TODO:
-    # - fazer parsing de titulo, -p, -d, -t
-    # - validar prioridade e data
-    # - gerar id
-    # - guardar em CSV
-    # Formato sugerido:
-    # id;status;prio;due;tags;created_at;done_at;title
-
-    echo "TODO: implementar todo-add"
+titulo=""
+    prioridade=3
+    data=""
+    tags=""
+    
+    # Percorrer todos os argumentos
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p)
+                prioridade="$2"
+                shift 2
+                ;;
+            -d)
+                data="$2"
+                shift 2
+                ;;
+            -t)
+                tags="$2"
+                shift 2
+                ;;
+            *)
+                
+                titulo="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # Verificar se o título foi informado
+    if [ -z "$titulo" ]; then
+        echo "Erro: Título é obrigatório" >&2
+        return 1
+    fi
+    
+    # Verificar se prioridade é válida (1 a 5)
+    if [ "$prioridade" -lt 1 ] || [ "$prioridade" -gt 5 ]; then
+        echo "Erro: Prioridade deve ser entre 1 e 5" >&2
+        return 1
+    fi
+    
+    # Verificar data se foi informada
+    if [ -n "$data" ]; then
+        # Verifica se tem formato AAAA-MM-DD
+        echo "$data" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+        if [ $? -ne 0 ]; then
+            echo "Erro: Data deve ser AAAA-MM-DD" >&2
+            return 1
+        fi
+    fi
+    
+    
+    acquire_lock
+    
+    # Calcular o próximo ID
+    if [ -s "$TODOS" ]; then
+        ultimo_id=$(cut -d';' -f1 "$TODOS" | sort -n | tail -1)
+        next_id=$((ultimo_id + 1))
+    else
+        next_id=1
+    fi
+    
+    
+    agora=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Escrever no arquivo CSV
+    echo "$next_id;OPEN;$prioridade;$data;$tags;$agora;;$titulo" >> "$TODOS"
+    
+    
+    release_lock
+    
+    echo "Tarefa $next_id criada com sucesso"
 }
+
 
 cmd_todo_list() {
     [ "${1-}" = "-h" ] && {
@@ -136,7 +198,7 @@ cmd_todo_list() {
     # - filtrar e ordenar
     # - imprimir formatado
 
-    echo "TODO: implementar todo-list"
+   
 }
 
 cmd_todo_done() {
@@ -144,13 +206,55 @@ cmd_todo_done() {
         print_todo_done_help
         return 0
     }
+id="$1"
+    
+    # Verificar se ID foi informado
+    if [ -z "$id" ]; then
+        echo "Erro: ID da tarefa é obrigatório" >&2
+        return 1
+    fi
+    
+    # Verificar se arquivo existe
+    if [ ! -f "$TODOS" ]; then
+        echo "Erro: Nenhuma tarefa encontrada" >&2
+        return 1
+    fi
+    
+    # Pegar lock
+    acquire_lock
+    
+    # Procurar a tarefa
+    if grep -q "^$id;" "$TODOS"; then
+        # Verificar se já está DONE
+        if grep "^$id;DONE;" "$TODOS" > /dev/null; then
+            echo "Tarefa $id já está concluída"
+            release_lock
+            return 0
+        fi
+        
+        
+        agora=$(date '+%Y-%m-%d %H:%M:%S')
+        
+        # Atualizar a linha
+        awk -F';' -v id="$id" -v agora="$agora" '
+            $1 == id {
+                $2 = "DONE"
+                $8 = agora
+            }
+            { print $1";"$2";"$3";"$4";"$5";"$6";"$7";"$8 }
+        ' "$TODOS" > "$TODOS.tmp"
+        
+        mv "$TODOS.tmp" "$TODOS"
+        echo "Tarefa $id marcada como concluída"
+    else
+        echo "Erro: Tarefa com ID $id não encontrada" >&2
+        release_lock
+        return 1
+    fi
+    
+    release_lock
 
-    # TODO:
-    # - validar id
-    # - marcar tarefa como DONE
-    # - guardar done_at
-
-    echo "TODO: implementar todo-done"
+    
 }
 
 cmd_todo_search() {
