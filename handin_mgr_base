@@ -354,17 +354,38 @@ id="$1"
 
 
 cmd_todo_search() {
+
+    # Se for pedir ajuda
     [ "${1-}" = "-h" ] && {
         print_todo_search_help
         return 0
     }
 
-    # TODO:
-    # - procurar texto no titulo
-    # - ignorar maiusculas/minusculas
-
-    echo "TODO: implementar todo-search"
+    # Pegar o texto para buscar
+    texto="$1"
+    
+    # Verificar se texto foi informado
+    if [ -z "$texto" ]; then
+        echo "Erro: Texto para busca é obrigatório" >&2
+        return 1
+    fi
+    
+    # Verificar se arquivo existe
+    if [ ! -f "$TODOS" ]; then
+        echo "Nenhuma tarefa encontrada"
+        return 0
+    fi
+    
+    # Buscar no título (case insensitive)
+    while IFS=';' read -r id status prio due tags created done title; do
+        # Converter título e texto para minúsculas e comparar
+        echo "$title" | grep -qi "$texto"
+        if [ $? -eq 0 ]; then
+            echo "[$id] (P$prio) $due $status tags:$tags - $title"
+        fi
+    done < "$TODOS"
 }
+
 
 
 
@@ -372,21 +393,80 @@ cmd_todo_search() {
 
 
 cmd_handin_ingest() {
+    # Se for pedir ajuda
     [ "${1-}" = "-h" ] && {
         print_handin_ingest_help
         return 0
     }
 
-    # TODO:
-    # - receber inbox_dir e repo_dir
-    # - suportar -m
-    # - validar nomes das entregas
-    # - copiar ou mover para repo_dir/UC/TP/aluno/timestamp
-    # - descompactar zip/tar/tar.gz se aplicavel
-    # - gerar relatorio em ~/.handin_mgr/runs/
-
-    echo "TODO: implementar handin-ingest"
+    inbox_dir="$1"
+    repo_dir="$2"
+    mover=""
+    
+    # Verificar opção -m
+    if [ "$3" = "-m" ]; then
+        mover="sim"
+    fi
+    
+    # Verificar se as pastas existem
+    if [ ! -d "$inbox_dir" ]; then
+        echo "Erro: Pasta inbox não existe: $inbox_dir" >&2
+        return 1
+    fi
+    
+    if [ ! -d "$repo_dir" ]; then
+        echo "Erro: Pasta repo não existe: $repo_dir" >&2
+        return 1
+    fi
+    
+    # Criar timestamp para o relatório
+    timestamp=$(date '+%Y-%m-%d_%H%M%S')
+    relatorio="$RUNS/ingest_$timestamp.txt"
+    
+    echo "Processando entregas em: $inbox_dir"
+    
+    # Para cada arquivo/pasta no inbox
+    for item in "$inbox_dir"/*; do
+        if [ -f "$item" ] || [ -d "$item" ]; then
+            nome=$(basename "$item")
+            
+            # Tentar extrair informações do nome
+            # Formato esperado: ALUNO_UC_TP#_TIMESTAMP
+            echo "$nome" | grep -qE '^[A-Za-z0-9]+_[A-Za-z0-9]+_TP[0-9]+_[0-9]{12}$'
+            if [ $? -eq 0 ]; then
+                # Nome válido
+                aluno=$(echo "$nome" | cut -d'_' -f1)
+                uc=$(echo "$nome" | cut -d'_' -f2)
+                tp=$(echo "$nome" | cut -d'_' -f3)
+                timestamp_nome=$(echo "$nome" | cut -d'_' -f4)
+                
+                # Criar destino
+                destino="$repo_dir/$uc/$tp/$aluno/$timestamp_nome"
+                mkdir -p "$destino"
+                
+                # Copiar ou mover
+                if [ -d "$item" ]; then
+                    cp -r "$item"/* "$destino/" 2>/dev/null
+                else
+                    cp "$item" "$destino/" 2>/dev/null
+                fi
+                
+                if [ "$mover" = "sim" ]; then
+                    rm -rf "$item"
+                fi
+                
+                echo "OK;$item;$destino" >> "$relatorio"
+                echo "  OK: $nome -> $destino"
+            else
+                echo "FAIL;$item;nome_invalido" >> "$relatorio"
+                echo "  FAIL: $nome (nome inválido)"
+            fi
+        fi
+    done
+    
+    echo "Relatório salvo em: $relatorio"
 }
+
 
 
 
@@ -395,18 +475,93 @@ cmd_handin_ingest() {
 
 
 cmd_handin_check() {
+    # Se for pedir ajuda
     [ "${1-}" = "-h" ] && {
         print_handin_check_help
         return 0
     }
 
-    # TODO:
-    # - percorrer repositorio
-    # - verificar README, src, ficheiros proibidos, binarios, tamanho, etc.
-    # - escrever CSV para stdout ou ficheiro com -o
-    # - criar tarefas automaticamente em caso de FAIL
-
-    echo "TODO: implementar handin-check"
+    repo_dir="$1"
+    output_file=""
+    
+    # Verificar opção -o
+    if [ "$2" = "-o" ]; then
+        output_file="$3"
+    fi
+    
+    # Verificar se repo existe
+    if [ ! -d "$repo_dir" ]; then
+        echo "Erro: Pasta repo não existe: $repo_dir" >&2
+        return 1
+    fi
+    
+    # Criar cabeçalho do relatório
+    if [ -n "$output_file" ]; then
+        echo "UC;TP#;ALUNO;timestamp;STATUS;num_src_files;total_files;total_lines;problemas" > "$output_file"
+    else
+        echo "UC;TP#;ALUNO;timestamp;STATUS;num_src_files;total_files;total_lines;problemas"
+    fi
+    
+    # Percorrer todas as entregas
+    for uc in "$repo_dir"/*; do
+        [ -d "$uc" ] || continue
+        for tp in "$uc"/*; do
+            [ -d "$tp" ] || continue
+            for aluno in "$tp"/*; do
+                [ -d "$aluno" ] || continue
+                for entrega in "$aluno"/*; do
+                    [ -d "$entrega" ] || continue
+                    
+                    nome_uc=$(basename "$uc")
+                    nome_tp=$(basename "$tp")
+                    nome_aluno=$(basename "$aluno")
+                    timestamp=$(basename "$entrega")
+                    
+                    # Verificar README
+                    problemas=""
+                    if [ ! -f "$entrega/README.md" ] && [ ! -f "$entrega/README.txt" ]; then
+                        problemas="missing_readme"
+                    fi
+                    
+                    # Verificar pasta src
+                    if [ ! -d "$entrega/src" ]; then
+                        if [ -n "$problemas" ]; then
+                            problemas="$problemas,missing_src"
+                        else
+                            problemas="missing_src"
+                        fi
+                        num_src=0
+                    else
+                        num_src=$(find "$entrega/src" -type f | wc -l)
+                    fi
+                    
+                    # Contar arquivos totais
+                    total_files=$(find "$entrega" -type f | wc -l)
+                    
+                    # Contar linhas
+                    total_lines=$(find "$entrega" -type f -exec cat {} \; 2>/dev/null | wc -l)
+                    
+                    # Decidir status
+                    if [ -n "$problemas" ]; then
+                        status="FAIL"
+                        # Criar tarefa automática
+                        cmd_todo_add "Corrigir entrega $nome_aluno $nome_uc $nome_tp ($problemas)" -p 4 -t "handin,$nome_uc,$nome_tp"
+                    else
+                        status="OK"
+                    fi
+                    
+                    # Escrever no relatório
+                    linha="$nome_uc;$nome_tp;$nome_aluno;$timestamp;$status;$num_src;$total_files;$total_lines;$problemas"
+                    
+                    if [ -n "$output_file" ]; then
+                        echo "$linha" >> "$output_file"
+                    else
+                        echo "$linha"
+                    fi
+                done
+            done
+        done
+    done
 }
 
 
@@ -416,17 +571,88 @@ cmd_handin_check() {
 
 
 cmd_handin_summary() {
+    # Se for pedir ajuda
     [ "${1-}" = "-h" ] && {
         print_handin_summary_help
         return 0
     }
 
-    # TODO:
-    # - agregar resultados do handin-check
-    # - suportar filtros -u e -t
-    # - mostrar totais e tops
-
-    echo "TODO: implementar handin-summary"
+    repo_dir="$1"
+    filtro_uc=""
+    filtro_tp=""
+    
+    # Processar argumentos
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -u)
+                filtro_uc="$2"
+                shift 2
+                ;;
+            -t)
+                filtro_tp="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    # Verificar se repo existe
+    if [ ! -d "$repo_dir" ]; then
+        echo "Erro: Pasta repo não existe: $repo_dir" >&2
+        return 1
+    fi
+    
+    echo "=== Resumo de Entregas ==="
+    if [ -n "$filtro_uc" ]; then
+        echo "Filtro UC: $filtro_uc"
+    fi
+    if [ -n "$filtro_tp" ]; then
+        echo "Filtro TP: $filtro_tp"
+    fi
+    echo ""
+    
+    # Contadores
+    total=0
+    ok=0
+    fail=0
+    
+    # Percorrer e contar
+    for uc in "$repo_dir"/*; do
+        [ -d "$uc" ] || continue
+        nome_uc=$(basename "$uc")
+        [ -n "$filtro_uc" ] && [ "$nome_uc" != "$filtro_uc" ] && continue
+        
+        for tp in "$uc"/*; do
+            [ -d "$tp" ] || continue
+            nome_tp=$(basename "$tp")
+            [ -n "$filtro_tp" ] && [ "$nome_tp" != "$filtro_tp" ] && continue
+            
+            for aluno in "$tp"/*; do
+                [ -d "$aluno" ] || continue
+                for entrega in "$aluno"/*; do
+                    [ -d "$entrega" ] || continue
+                    
+                    total=$((total + 1))
+                    
+                    # Verificar status (simplificado - verifica se tem src e README)
+                    if [ -d "$entrega/src" ] && ([ -f "$entrega/README.md" ] || [ -f "$entrega/README.txt" ]); then
+                        ok=$((ok + 1))
+                    else
+                        fail=$((fail + 1))
+                        echo "Aluno com FAIL: $(basename "$aluno")"
+                    fi
+                done
+            done
+        done
+    done
+    
+    echo ""
+    echo "Total de entregas: $total"
+    echo "OK: $ok"
+    echo "FAIL: $fail"
 }
 
 
@@ -529,3 +755,5 @@ run_shell() {
 }
 
 run_shell
+
+
